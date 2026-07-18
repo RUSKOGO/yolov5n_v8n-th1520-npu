@@ -1,0 +1,49 @@
+# Build artifacts
+*.so
+*.o
+*.a
+*.params
+model.params
+model_v8.params
+libyolov5n.so
+libyolov8n.so
+
+# Models / export
+*.onnx
+*.pt
+*.pth
+*.engine
+export/
+hhb_out/
+hhb_out2/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+venv_new/
+
+# Calib images (keep folder via .gitkeep; don't commit bulk JPGs)
+calib/*.jpg
+calib/*.jpeg
+calib/*.png
+calib/*.bmp
+!calib/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local run leftovers
+*.jpg
+*.jpeg
+*.avi
+*.mp4
+result_*
+check_run/
+check_run8/
+*.log
