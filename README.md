@@ -1,159 +1,166 @@
-# YOLOv5n / YOLOv8 на TH1520 NPU (LicheePi 4A)
-
-Низкоуровневая C-библиотека + Python-демо для INT8-инференса YOLO на
-**NPU VIP9000** платы **Sipeed LicheePi 4A** (чип XuanTie TH1520).
-
-Цель: NPU не простаивает из‑за медленного Python на RISC-V.
-Типично: **~15–40 ms** на граф (десятки FPS), LUT-препроцесс и NMS в C.
-
-| | YOLOv5n | YOLOv8 (в т.ч. custom PPE) |
-|--|---------|----------------------------|
-| Библиотека | `libyolov5n.so` | `libyolov8n.so` |
-| Исходники | `src/yolov5n_lib.*` | `src/yolov8_lib.*` |
-| Граф HHB | `vendor/hhb/` | `vendor/hhb_v8/` |
-| Демо | `python/check.py` | `python/check_v8.py` |
-| Сборка | `scripts/build_so.sh` | `scripts/build_so_v8.sh` |
-| Постпроцесс | SHL yolov5 NMS | свой DFL decode + NMS |
+**Language / Язык:** [English](#english) · [Русский](#русский)
 
 ---
 
-## Быстрый старт (уже есть `.so` + `model.params`)
+<a id="english"></a>
 
-На плате:
+# YOLO on TH1520 NPU
+
+[![Target](https://img.shields.io/badge/board-LicheePi%204A%20%2F%20TH1520-blue)](#quick-start)
+[![NPU](https://img.shields.io/badge/NPU-VIP9000%20INT8-green)](#quick-start)
+
+C shared libraries and Python demos for **INT8 YOLO** on the
+**XuanTie TH1520 VIP9000** (Sipeed **LicheePi 4A**, RevyOS).
+
+Preprocess, NPU run, and postprocess live in a small `.so` so you get
+**tens of FPS** instead of the usual **1–4 FPS** from naive Python + HHB samples.
+
+| Library | Binary | Demo |
+|---------|--------|------|
+| YOLOv5n | `libyolov5n.so` | [`examples/yolov5n`](examples/yolov5n) |
+| YOLOv8 / PPE | `libyolov8n.so` | [`examples/yolov8n`](examples/yolov8n) |
+
+## Quick start
+
+Prebuilt `.so` + `model.params` are in the repo. **Run on the board** (RISC-V), not on a PC.
 
 ```bash
-cd check_run8   # или любая папка с артефактами
-# нужны: libyolov8n.so  model.params  check_v8.py  classes.txt
-
-python3 -m venv venv_new && source venv_new/bin/activate
-pip install -r requirements.txt   # из python/requirements.txt
-
-python3 check_v8.py --source auto
-# браузер: http://<IP-платы>:8000/
+git clone <this-repo>.git
+cd yolov5n-th1520-npu/examples/yolov8n   # or examples/yolov5n
+chmod +x run.sh
+./run.sh
 ```
 
-Имена классов PPE (порядок = id из обучения):
+Open `http://<board-ip>:8000/`.
 
-```text
-Hardhat, Mask, NO-Hardhat, NO-Mask, NO-Safety Vest,
-Person, Safety Cone, Safety Vest, machinery, vehicle
+Same without the helper script:
+
+```bash
+cd examples/yolov8n
+pip install -r requirements.txt
+python3 check_v8.py --source auto --names classes.txt
 ```
 
-Файл: `python/classes.txt` (или `--names classes.txt`).
+## What you get
 
----
+- Zero-overhead C runtime (`init_model` / `run_inference` via ctypes)
+- Webcam → WebSocket preview demos
+- Export + HHB scripts to quantize **your own** weights
 
-## С нуля (веса → плата)
+## Documentation
 
-Полная инструкция: **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)**
+| Doc | Contents |
+|-----|----------|
+| [examples/](examples/) | Ready-to-run bundles |
+| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md#english) | Board / webcam notes |
+| [docs/QUANTIZATION.md](docs/QUANTIZATION.md#english) | `.pt` → ONNX → HHB → `.so` |
+| [docs/LIB_YOLOV5N.md](docs/LIB_YOLOV5N.md#english) | `libyolov5n` API |
+| [docs/LIB_YOLOV8.md](docs/LIB_YOLOV8.md#english) | `libyolov8n` API |
+| [docs/YOLOV8_HHB.md](docs/YOLOV8_HHB.md#english) | YOLOv8 graph checklist |
+| [docs/README.md](docs/README.md#english) | Full index |
 
-Кратко:
+**Why this library**, vs alternatives, and optimizations: see
+[docs/LIB_YOLOV5N.md](docs/LIB_YOLOV5N.md#english) / [docs/LIB_YOLOV8.md](docs/LIB_YOLOV8.md#english)
+and the project motivation in [docs/README.md](docs/README.md#english).
+(Short version: Python+HHB samples starve the NPU; this `.so` keeps it fed.)
 
-1. Обучить / взять `.pt` (Ultralytics YOLOv8)
-2. Экспорт raw-heads ONNX **без Slice/Split** (`scripts/export_yolov8_raw_heads.py`)
-3. Квантование HHB → `model.c` + `model.params`
-4. Сборка `libyolov8n.so` (`scripts/build_so_v8.sh`)
-5. Деплой на LicheePi 4A + `check_v8.py`
-
-Для YOLOv5: см. раздел в GETTING_STARTED и `vendor/hhb/`.
-
-Детали HHB / графа v8: **[docs/YOLOV8_HHB.md](docs/YOLOV8_HHB.md)**
-
----
-
-## Структура репозитория
-
-```text
-yolov5n-th1520-npu/
-├── README.md
-├── docs/
-│   ├── GETTING_STARTED.md   ← с нуля: что скачать и как собрать
-│   └── YOLOV8_HHB.md        ← экспорт, Slice→Conv, HHB флаги
-├── src/
-│   ├── yolov5n_lib.c / .h   ← ctypes API v5
-│   └── yolov8_lib.c / .h    ← ctypes API v8 (DFL + NMS)
-├── vendor/
-│   ├── hhb/                 ← HHB model.c/io.* для YOLOv5n
-│   └── hhb_v8/              ← то же для YOLOv8 (после вашего HHB)
-├── python/
-│   ├── check.py             ← демо v5
-│   ├── check_v8.py          ← демо v8 + webcam + WebSocket
-│   ├── classes.txt          ← имена классов (PPE)
-│   └── requirements.txt
-├── scripts/
-│   ├── build_so.sh / build_so_v8.sh
-│   ├── export_yolov8_raw_heads.py   ← обязательный экспорт для NPU
-│   ├── onnx_slice_to_conv.py        ← если в ONNX остались Slice
-│   ├── onnx_split_to_slice.py
-│   ├── make_calib_images.py
-│   └── export_yolov8_onnx.py
-└── calib/                   ← картинки для калибровки HHB (свои!)
-```
-
-**Не коммитить** (см. `.gitignore`): `*.so`, `model.params`, `*.onnx`, `*.pt`, `hhb_out/`.
-
----
-
-## C API (ctypes)
-
-Одинаковый контракт для v5 и v8:
+### C API (sketch)
 
 ```c
 void *init_model(const char *params_path);
 int   run_inference(void *handle, uint8_t *bgr_640x640,
                     float *out_boxes, int max_boxes);
 void  release_model(void *handle);
-int   yolo_set_thresholds(void *handle, float conf, float iou);
-int   yolo_warmup(void *handle, int runs);
-int   yolo_get_timings_us(void *handle, float *pre, float *npu, float *post);
 ```
 
-- Вход: contiguous **BGR** `uint8`, letterbox **640×640×3**
-- Выход: `x1,y1,x2,y2,score,cls` в координатах letterbox
-- Два `init_model()` можно; NPU сериализуется внутренним lock
-- Не вызывать `run_inference` параллельно на **одном** handle
+See [LIB_YOLOV5N](docs/LIB_YOLOV5N.md#english) / [LIB_YOLOV8](docs/LIB_YOLOV8.md#english) for the full surface.
+
+## License notes
+
+MIT — see [LICENSE](LICENSE).
+
+`vendor/hhb*` is HHB-generated (T-Head). Ultralytics train/export is GPL-3.0 if
+redistributed; this repo focuses on the **runtime**.
 
 ---
 
-## Производительность
+<a id="русский"></a>
 
-| Симптом | Причина | Что делать |
-|---------|---------|------------|
-| `npu_ms` ~200–270, спам `Strided_slice` | C2f Slice на CPU | переэкспорт без Slice, новый HHB + `.so` + `model.params` |
-| `npu_ms` ~15–40, FPS ок | норма | — |
-| камера `errno=19` | USB UVC + NPU | NPU init первым; MJPG; `--source /dev/video0` |
-| подписи bus/car | COCO имена | свой `classes.txt` |
+# YOLO на NPU TH1520
 
-Всегда копируйте на плату **пару** `libyolov*.so` + `model.params` из **одного** HHB-прогона.
+**[↑ English](#english)** · **Русский**
 
-Проверка нового v8-графа:
+[![Плата](https://img.shields.io/badge/плата-LicheePi%204A%20%2F%20TH1520-blue)](#быстрый-старт)
+[![NPU](https://img.shields.io/badge/NPU-VIP9000%20INT8-green)](#быстрый-старт)
+
+C-библиотеки и Python-демо для **INT8 YOLO** на **VIP9000** (Sipeed **LicheePi 4A**, RevyOS).
+
+Препроцесс, прогон на NPU и постпроцесс — в `.so`, чтобы получать **десятки FPS**,
+а не типичные **1–4 FPS** у наивного Python и примеров HHB.
+
+| Библиотека | Бинарь | Демо |
+|------------|--------|------|
+| YOLOv5n | `libyolov5n.so` | [`examples/yolov5n`](examples/yolov5n) |
+| YOLOv8 / PPE | `libyolov8n.so` | [`examples/yolov8n`](examples/yolov8n) |
+
+## Быстрый старт
+
+В репозитории уже лежат собранные `.so` и `model.params`.
+Запускать нужно **на плате** (RISC-V), не на ПК.
 
 ```bash
-grep -c strided_slice vendor/hhb_v8/model.c   # 0
-strings libyolov8n.so | grep strided_slice    # пусто
+git clone <этот-репо>.git
+cd yolov5n-th1520-npu/examples/yolov8n   # или examples/yolov5n
+chmod +x run.sh
+./run.sh
 ```
 
----
+Откройте `http://<IP-платы>:8000/`.
 
-## Требования
+Без скрипта:
 
-| Где | Что |
-|-----|-----|
-| Docker / ПК с HHB | пакет `hhb`, Python, ultralytics (экспорт) |
-| Сборка `.so` | `riscv64-unknown-linux-gnu-gcc` **или** `gcc` на плате |
-| Плата RevyOS | `libshl` (из HHB runtime), Python3, OpenCV, FastAPI |
+```bash
+cd examples/yolov8n
+pip install -r requirements.txt
+python3 check_v8.py --source auto --names classes.txt
+```
 
----
+## Что внутри
+
+- Runtime на C (`init_model` / `run_inference` через ctypes)
+- Демо: камера → предпросмотр по WebSocket
+- Скрипты экспорта и HHB для **своих** весов
+
+## Документация
+
+| Документ | Содержание |
+|----------|------------|
+| [examples/](examples/) | Готовые бандлы «скачал — запустил» |
+| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md#русский) | Плата, камера |
+| [docs/QUANTIZATION.md](docs/QUANTIZATION.md#русский) | `.pt` → ONNX → HHB → `.so` |
+| [docs/LIB_YOLOV5N.md](docs/LIB_YOLOV5N.md#русский) | API `libyolov5n` |
+| [docs/LIB_YOLOV8.md](docs/LIB_YOLOV8.md#русский) | API `libyolov8n` |
+| [docs/YOLOV8_HHB.md](docs/YOLOV8_HHB.md#русский) | Чеклист графа YOLOv8 |
+| [docs/README.md](docs/README.md#русский) | Полное оглавление |
+
+**Зачем библиотека**, сравнение с аналогами и оптимизации — в
+[спецификациях](docs/LIB_YOLOV8.md#русский) и [оглавлении](docs/README.md#русский).
+Кратко: Python + сэмплы HHB не успевают кормить NPU; этот `.so` держит его загруженным.
+
+### C API (кратко)
+
+```c
+void *init_model(const char *params_path);
+int   run_inference(void *handle, uint8_t *bgr_640x640,
+                    float *out_boxes, int max_boxes);
+void  release_model(void *handle);
+```
+
+Полностью: [LIB_YOLOV5N](docs/LIB_YOLOV5N.md#русский) / [LIB_YOLOV8](docs/LIB_YOLOV8.md#русский).
 
 ## Лицензии
 
-- `vendor/hhb*` — код, сгенерированный HHB (шаблоны T-Head)
-- Обёртки `src/*` — ваша лицензия при публикации
-- Ultralytics YOLO — GPL-3.0 (если тащите их train/export код)
+MIT — см. [LICENSE](LICENSE).
 
----
-
-## Связанные доки
-
-- [С нуля](docs/GETTING_STARTED.md)
-- [YOLOv8 + HHB подробно](docs/YOLOV8_HHB.md)
+`vendor/hhb*` — код HHB (T-Head). Ultralytics (train/export) — GPL-3.0 при
+распространении; этот репозиторий сосредоточен на **runtime**.

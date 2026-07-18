@@ -1,48 +1,33 @@
-# YOLOv8n → TH1520 (HHB) → libyolov8n.so
-
-Техническая шпаргалка. Полный путь «с нуля»: [GETTING_STARTED.md](GETTING_STARTED.md).
-
-## 1. Экспорт ONNX
-
-```bash
-pip install ultralytics onnx
-python3 scripts/export_yolov8_raw_heads.py --weights ppe.pt --out yolov8n_raw.onnx
-```
-
-Требования VIP9000:
-
-| Требование | Почему |
-|------------|--------|
-| Opset **12** | стабильнее для HHB |
-| **Нет NMS** в графе | NMS в нашей C-либе |
-| Fixed `imgsz=640` | фиксированный shape |
-| **3 raw heads** `(1, 4*reg_max+nc, H, W)` | без DFL Softmax в графе |
-| **0 Slice / 0 Split** | иначе CPU `CusStridedSlice` → ~4 FPS или краш |
-
-Скрипт патчит C2f (`chunk` → два half-Conv) и пишет `classes.txt`.
-
-### Если в ONNX остались Slice / Split
-
-```bash
-python3 scripts/onnx_split_to_slice.py --in in.onnx --out mid.onnx
-python3 scripts/onnx_slice_to_conv.py  --in mid.onnx --out yolov8n_raw.onnx
-```
-
-`onnx_slice_to_conv.py` заменяет channel-Slice на 1×1 Conv (на NPU).
-
-### Если HHB падает на DECODED / Softmax
-
-Симптом: `Could not create network object`, `MBS parser`, SegFault.  
-Решение: только raw-heads экспорт выше (не `yolo export` с одним `output0`).
-
-### Если краш на `csinn_split`
-
-Симптом: `shl_pnna_create_split_internal`, `Expect number`.  
-Решение: Split→Slice→Conv (команды выше), затем HHB.
+**Language / Язык:** [English](#english) · [Русский](#русский)
 
 ---
 
-## 2. HHB
+<a id="english"></a>
+
+# YOLOv8 × HHB — graph checklist
+
+Short reference. Full pipeline: [QUANTIZATION.md](QUANTIZATION.md#english).  
+Runtime: [LIB_YOLOV8.md](LIB_YOLOV8.md#english).
+
+## Required ONNX
+
+| Item | Value |
+|------|--------|
+| Opset | 12 |
+| Input | `images`, shape `1×3×640×640` |
+| Outputs | `output0;output1;output2` (raw heads) |
+| Per head | `(1, 4*reg_max+nc, H, W)`, e.g. `(1, 74, 80)` |
+| `Slice` / `Split` | **0** |
+
+```bash
+python3 scripts/export_yolov8_raw_heads.py --weights ppe.pt --out yolov8n_raw.onnx
+
+# only if Slice/Split remain:
+python3 scripts/onnx_split_to_slice.py --in yolov8n_raw.onnx --out mid.onnx
+python3 scripts/onnx_slice_to_conv.py  --in mid.onnx --out yolov8n_raw.onnx
+```
+
+## HHB
 
 ```bash
 hhb -D \
@@ -55,69 +40,74 @@ hhb -D \
   --input-shape "1 3 640 640" \
   --calibrate-dataset calib \
   --quantization-scheme "int8_asym"
-```
 
-Проверка:
-
-```bash
-grep -c strided_slice hhb_out/model.c   # 0
-grep -c csinn_split hhb_out/model.c     # 0
-cp -f hhb_out/model.c hhb_out/io.c hhb_out/io.h vendor/hhb_v8/
-```
-
----
-
-## 3. Сборка
-
-```bash
+grep -c strided_slice hhb_out/model.c   # must be 0
+grep -c csinn_split hhb_out/model.c     # must be 0
+cp -f hhb_out/{model.c,io.c,io.h} vendor/hhb_v8/
 ./scripts/build_so_v8.sh
-# → libyolov8n.so
 ```
 
-На плату: **`libyolov8n.so` + `hhb_out/model.params`** из этого же прогона.
+## Failure modes
+
+| Symptom | Meaning |
+|---------|---------|
+| `Strided_slice ... memory leak` and `npu_ms~240` | Slice on CPU — bad graph or stale deploy |
+| `csinn_split` / `Expect number` | Split still present |
+| Softmax / create-network failure | Use raw-heads export, not DECODED Ultralytics ONNX |
 
 ---
 
-## 4. Демо
+<a id="русский"></a>
+
+# YOLOv8 × HHB — чеклист графа
+
+**[↑ English](#english)** · **Русский**
+
+Краткий справочник. Полный пайплайн: [QUANTIZATION.md](QUANTIZATION.md#русский).  
+Runtime: [LIB_YOLOV8.md](LIB_YOLOV8.md#русский).
+
+## Требования к ONNX
+
+| Параметр | Значение |
+|----------|----------|
+| Opset | 12 |
+| Вход | `images`, форма `1×3×640×640` |
+| Выходы | `output0;output1;output2` (сырые головы) |
+| На голову | `(1, 4*reg_max+nc, H, W)`, напр. `(1, 74, 80)` |
+| `Slice` / `Split` | **0** |
 
 ```bash
-python3 python/check_v8.py --names python/classes.txt --source auto
+python3 scripts/export_yolov8_raw_heads.py --weights ppe.pt --out yolov8n_raw.onnx
+
+# только если Slice/Split остались:
+python3 scripts/onnx_split_to_slice.py --in yolov8n_raw.onnx --out mid.onnx
+python3 scripts/onnx_slice_to_conv.py  --in mid.onnx --out yolov8n_raw.onnx
 ```
 
-Ожидаемый лог:
+## HHB
 
-```text
-YOLOv8 outputs: num=3 layout=RAW_DFL nc=10 reg_max=16
+```bash
+hhb -D \
+  --model-file yolov8n_raw.onnx \
+  --model-format onnx \
+  --data-scale-div 255 \
+  --board th1520 \
+  --input-name "images" \
+  --output-name "output0;output1;output2" \
+  --input-shape "1 3 640 640" \
+  --calibrate-dataset calib \
+  --quantization-scheme "int8_asym"
+
+grep -c strided_slice hhb_out/model.c   # должно быть 0
+grep -c csinn_split hhb_out/model.c     # должно быть 0
+cp -f hhb_out/{model.c,io.c,io.h} vendor/hhb_v8/
+./scripts/build_so_v8.sh
 ```
 
-Без спама `Strided_slice ... memory leak`. `npu_ms` ~15–40.
+## Типичные сбои
 
----
-
-## Layouts в `yolov8_lib.c`
-
-| Layout | Выходы HHB | Постпроцесс |
-|--------|------------|-------------|
-| `RAW_DFL` | 3× `(1, 4*reg_max+nc, H, W)` | DFL + NMS в C (рекомендуется) |
-| `DECODED` | 1× `(1, 4+nc, N)` | без DFL (если Softmax влез в NPU) |
-
-`nc` для raw heads: `channels - 4*16` (пример: 74 → 10).
-
----
-
-## Типичные PPE-имена (пример)
-
-```text
-Hardhat
-Mask
-NO-Hardhat
-NO-Mask
-NO-Safety Vest
-Person
-Safety Cone
-Safety Vest
-machinery
-vehicle
-```
-
-Берите из своего `.pt`: `YOLO("ppe.pt").names`.
+| Симптом | Смысл |
+|---------|--------|
+| `Strided_slice ... memory leak` и `npu_ms~240` | Slice на CPU — плохой граф или устаревший деплой |
+| `csinn_split` / `Expect number` | В графе остался Split |
+| Softmax / ошибка создания сети | Нужен raw-heads экспорт, не DECODED ONNX Ultralytics |

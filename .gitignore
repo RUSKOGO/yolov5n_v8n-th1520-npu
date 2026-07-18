@@ -1,4 +1,4 @@
-# Build artifacts
+# Build artifacts (except prebuilt examples)
 *.so
 *.o
 *.a
@@ -7,6 +7,10 @@ model.params
 model_v8.params
 libyolov5n.so
 libyolov8n.so
+!examples/yolov5n/libyolov5n.so
+!examples/yolov5n/model.params
+!examples/yolov8n/libyolov8n.so
+!examples/yolov8n/model.params
 
 # Models / export
 *.onnx
@@ -24,7 +28,7 @@ __pycache__/
 venv/
 venv_new/
 
-# Calib images (keep folder via .gitkeep; don't commit bulk JPGs)
+# Calib images (keep folder via .gitkeep)
 calib/*.jpg
 calib/*.jpeg
 calib/*.png
@@ -46,4 +50,5 @@ Thumbs.db
 result_*
 check_run/
 check_run8/
+dist/
 *.log
